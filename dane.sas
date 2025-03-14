@@ -1,0 +1,311 @@
+/* Przygotowanie danych                 */
+/* ------------------------------------ */
+
+/* Customers */
+
+data surnames;
+	infile "/home/u63791625/projekt/zbiorki/surnames.txt" dlm = "," firstobs=2;
+	length Surname $ 32 Nationality $ 32;
+	input Surname Nationality;
+run;
+data surnames(where=(Nationality = 'English' or Nationality = 'French'));
+	set surnames;
+	x = rand('Uniform');
+run;
+proc sort data = surnames out = surnames(drop = x Nationality);
+	by x;
+quit;
+
+data names_women;
+	infile "/home/u63791625/projekt/zbiorki/girl_names_1909.txt" dlm = "," firstobs=2;
+	length Name $ 32;
+	input Rank Name;
+	drop Rank;
+run;
+data names_women;
+	set names_women;
+	x = rand('Uniform');
+	if x < 0.05 then output;
+	drop x;
+run;
+data women;
+	set names_women; 
+	set surnames;
+run;
+
+data names_men;
+	infile "/home/u63791625/projekt/zbiorki/boy_names_1909.txt" dlm = "," firstobs=2;
+	length Name $ 32;
+	input Rank Name;
+	drop Rank;
+run;
+data names_men;
+	set names_men;
+	x = rand('Uniform');
+	if x < 0.1 then output;
+	drop x;
+run;
+data men;
+	set names_men;
+	set surnames;
+run;
+
+
+data customers;
+	retain Customer_id;
+	set women men;
+	Customer_id + 1;
+	x = rand('Uniform');
+	status = 0;
+	mail = catx('.', name, surname);
+	mail = catt(mail, '@gmail.com');
+	drop x;
+run;
+data _null_;
+	set customers nobs=n;
+	call symputx('n_customers', n);
+	stop;
+run;
+
+
+data phones;
+	infile "/home/u63791625/projekt/zbiorki/phone_numbers_uk_formatted.txt" dlm = ",";
+	length phone $ 32;
+	input phone;
+run;
+data customers;
+	set customers;
+	set phones;
+	length phone $ 32;
+run;
+
+data adresses;
+	infile "/home/u63791625/projekt/zbiorki/uk_addresses.txt" dlm = "-";
+	length adress $ 60;
+	input adress;
+run;
+data adresses;
+	set adresses;
+	retain AdressId;
+	if _N_ > &n_customers then stop;
+	AdressId + 1;
+	retain AdressId;
+	n_dlm = countc(adress, ',');
+	PostCode = scan(adress, n_dlm + 1, ',');
+	City = scan(adress, n_dlm, ',');
+	BuildingStreet = scan(adress, n_dlm - 1, ',');
+	if n_dlm - 1 = 2 then do;
+		var = scan(adress, 1, ',');
+		BuildingStreet = catx(',', var, BuildingStreet);
+	end;
+	x = rand('Uniform');
+	keep AdressId BuildingStreet City PostCode x;
+run;
+proc sort data = adresses out = adresses(drop = x);
+by x;
+run;
+data customers;
+	set customers;
+	set adresses;
+	drop BuildingStreet PostCode City;
+run;
+
+
+
+/* Products */
+
+data flowers;
+	infile "/home/u63791625/projekt/zbiorki/flower_names.txt";
+	length Product $ 32;
+	retain ProductId;
+	ProductId +1;
+	input Product;
+	stock_price = round(rand('Uniform')*3, 0.01);
+run;
+data flowers_p;
+	set flowers;
+	Category = 1;
+	Price = round(stock_price*1.25, 0.01);
+	Stock = 20;
+	drop stock_price;
+run;
+
+data flowerOrders;
+	set flowers_p;
+	quant = stock;
+	total_price = Price * quant;
+	OrderDate = intnx('year', today(), -1, 'same');
+	format OrderDate date9.;
+	drop stock;
+run;
+
+data _null_;
+	set flowers nobs=n;
+	call symputx('n_flowers', n);
+	stop;
+run;
+data _null_;
+	set flowers end = end;
+	retain flower_ids  flower_price;
+	length flower_ids $32000 flower_price $32000;
+	if _N_ = 1 then do;
+		flower_ids = put(ProductId, best12.);
+		flower_price = put(stock_price, best12.);
+	end;
+	else do;
+		flower_ids =   catx(',', flower_ids,   put(ProductId, best12.));
+		flower_price = catx(',', flower_price, put(stock_price, best12.));
+	end;
+	if end then do;
+		call symputx('flower_ids', flower_ids);
+		call symputx('flower_price', flower_price);
+	end;
+run;
+
+data arrangements;
+	infile "/home/u63791625/projekt/zbiorki/abstract_bouquet_names.txt" dlm = ',';
+	length Product $ 32;
+	retain ProductId;
+	ProductId +1;
+	input Product;
+	archive = 0;
+run;
+
+data arrangements_details;
+	set arrangements;
+	array used_flowers(8) _temporary_;
+	x = ceil(rand('Uniform')*5)+3;
+	do i = 1 to x;
+		found = 1;
+		do until (found = 0);
+			found = 0;
+			y = ceil(rand('Uniform')*(&n_flowers));
+			do j = 1 to 8;
+				if y = used_flowers[j] then do;
+					found = 1;
+				end;
+			end;
+		end;
+		used_flowers[i] = y;
+		flower = input(scan("&&flower_ids", y, ','), best12.);
+		price_f = input(scan("&&flower_price", y, ','), best12.);
+		quant = ceil(rand('Uniform')*10)+5;
+		pq = price_f*quant;
+		output;
+	end;
+	keep ProductId flower price_f quant pq;
+run;
+proc sql noprint;
+	create table arrangements_details as
+	select *, sum(pq) as total_price, sum(quant) as flower_count
+	from arrangements_details
+	group by ProductId;
+quit;
+proc univariate data = arrangements_details noprint;
+	var flower_count;
+	output out = arrangements_perc pctlpts=25 50 75 plctpre = P_;
+run;
+data _null_;
+	set arrangements_perc;
+	call symputx('a25', P_25);
+	call symputx('a50', P_50);
+	call symputx('a75', P_75);
+run;
+data arrangements_details;
+	set arrangements_details;
+	if flower_count <= &a25 then do; total_price = round(total_price*1.25, 0.01); size = 0; end;
+	else if flower_count <= &a50 then do; total_price = round(total_price*1.5, 0.01); size = 1; end;
+	else do; total_price = round(total_price*1.75, 0.01); size = 2; end;
+	keep ProductId flower quant total_price flower_count size;
+run;
+proc sort data = arrangements_details out = arrangements_to_merge(drop = flower quant) nodupkey;
+by ProductID;
+run;
+proc sort data = arrangements out = arrangements; by ProductID;
+run;
+
+data arrangements;
+	merge arrangements (in = in1) arrangements_to_merge (in = in2);
+	by ProductId;
+	if in1 and in2;
+	Price = total_price;
+	drop total_price;
+run;
+
+data _null_;
+	set flowers nobs=n;
+	call symputx('n_arrangements', n);
+	stop;
+run;
+data _null_;
+	set arrangements end = end;
+	retain arrangement_ids  arrangement_price;
+	length arrangement_ids $32000 arrangement_price $32000;
+	if _N_ = 1 then do;
+		arrangement_ids = put(ProductId, best12.);
+		arrangement_price = put(Price, best12.);
+	end;
+	else do;
+		arrangement_ids =   catx(',', arrangement_ids,   put(ProductId, best12.));
+		arrangement_price = catx(',', arrangement_price, put(Price, best12.));
+	end;
+	if end then do;
+		call symputx('arrangement_ids', arrangement_ids);
+		call symputx('arrangement_price', arrangement_price);
+	end;
+run;
+
+/* Orders */
+data Orders;
+	datemin = intnx('year', today(), -1, 'same');
+	datemax = today();
+	do i = 1 to &n_customers;
+		CustomerId = i;
+		do j = 1 to ceil(rand('Uniform')*3);
+			OrderDate = intnx('day', datemin, floor(rand('Uniform')*(datemax - datemin + 1)), 'same');
+			ShippmentDate = intnx('day', OrderDate, ceil(rand('Uniform')*7)+1, 'same');
+			DeliveryDate = intnx('day', ShippmentDate, 1, 'same');
+			output;
+		end;
+	end;
+	drop i j datemin datemax;
+run;
+proc sort data = Orders out = Orders;
+by OrderDate;
+run;
+data Orders;
+	set Orders;
+	retain OrderId;
+	OrderId + 1;
+	if DeliveryDate =< today() then Status = 3;
+	else if DeliveryDate > today() and ShippmentDate =< today() then Status = 2;
+	else if ShippmentDate = intnx('day', today(), 1, 'same') then Status = 1;
+	else Status = 0;
+	drop x;
+run;
+proc sort data = Orders out = Orders;
+by descending OrderDate;
+run;
+data Orders;
+	set Orders;
+	format OrderDate date9.;
+	format ShippmentDate date9.;
+	format DeliveryDate date9.;
+run;
+data _null_;
+	set Orders nobs=n;
+	call symputx('n_orders', n);
+	stop;
+run;
+
+data OrderDetails;
+	do i = 1 to &n_orders;
+		OrderId = i;
+		ProductId = ceil(rand('Uniform')*&n_arrangements);
+		Quant = 1;
+		Price = input(scan("&&arrangement_price", ProductId - &n_flowers, ','), best12.);
+		output;
+	end;
+	drop flower i j num_flowers customs;
+run;
+
